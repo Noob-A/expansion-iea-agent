@@ -22,7 +22,6 @@ from pathlib import Path
 from typing import Literal, TypedDict
 
 from config import SETTINGS
-from llm import make_llm
 
 
 class SelfModState(TypedDict):
@@ -64,6 +63,10 @@ class _SelfModGraph:
             if not (SETTINGS.openai_api_key or SETTINGS.openrouter_api_key):
                 return {**state, "status": "failed", "last_result": "Missing API key"}
 
+            try:
+                from llm import make_llm  # Local import to avoid heavy deps when unused
+            except Exception as exc:  # pragma: no cover - optional deps may be missing
+                return {**state, "status": "failed", "last_result": str(exc)}
             llm = make_llm("code")
             files = "\n".join(f"- {f}" for f in state["file_list"])
             try:
@@ -76,6 +79,21 @@ class _SelfModGraph:
                 repo_files = ""
             if len(repo_files) > 8000:
                 repo_files = repo_files[:8000] + "\n..."
+
+            # Include file contents with line numbers so the model knows the context
+            snippets = []
+            for rel_path in state["file_list"]:
+                path = self.repo_root / rel_path
+                try:
+                    text = path.read_text()
+                except Exception:
+                    continue
+                if len(text) > 8000:
+                    text = text[:8000] + "\n..."
+                numbered = "\n".join(f"{i+1:4}: {line}" for i, line in enumerate(text.splitlines()))
+                snippets.append(f"File: {rel_path}\n{numbered}")
+            files_blob = "\n\n".join(snippets)
+
             prompt = textwrap.dedent(
                 f"""
                 You are an expert software engineer working on the following repository. The
@@ -87,6 +105,9 @@ class _SelfModGraph:
 
                 Focus on these paths if relevant:
                 {files}
+
+                Current contents:
+                {files_blob}
 
                 Provide a unified diff starting with 'diff --git' that implements the goal.
                 Do not include any commentary outside of the patch.
