@@ -65,14 +65,30 @@ class _SelfModGraph:
 
             llm = make_llm("code")
             files = "\n".join(f"- {f}" for f in state["file_list"])
+            try:
+                repo_files = subprocess.check_output(
+                    ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                    cwd=self.repo_root,
+                    text=True,
+                )
+            except Exception:  # pragma: no cover - git not available
+                repo_files = ""
+            if len(repo_files) > 8000:
+                repo_files = repo_files[:8000] + "\n..."
             prompt = textwrap.dedent(
                 f"""
-                You are modifying a codebase. Goal: {state['goal']}
-                Provide a unified diff patch for the following files:
+                You are an expert software engineer working on the following repository. The
+                current file list is:
 
+                {repo_files}
+
+                Goal: {state['goal']}
+
+                Focus on these paths if relevant:
                 {files}
 
-                Only output the patch.
+                Provide a unified diff starting with 'diff --git' that implements the goal.
+                Do not include any commentary outside of the patch.
                 """
             )
             try:
