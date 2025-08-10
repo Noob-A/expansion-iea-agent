@@ -15,6 +15,7 @@ without external dependencies.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import textwrap
 from pathlib import Path
@@ -103,11 +104,13 @@ class _SelfModGraph:
             return {**state, "status": "patched", "last_result": patch_text}
 
         if status == "patched":
+            env = {**os.environ, "PYTHONPATH": str(self.repo_root / "src/iea")}
             proc = subprocess.run(
                 ["pytest", "-q"],
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
+                env=env,
             )
             out = proc.stdout + proc.stderr
             new_status = "tested" if proc.returncode == 0 else "failed"
