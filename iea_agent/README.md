@@ -20,7 +20,7 @@ docker compose exec app python -m iea.cli target "Find 3 micro-revenue ideas for
 # Run info brief directly:
 docker compose exec app python -m iea.cli brief "Practical Asahi Arch + Hyprland tuning tips on M2 Max"
 
-# Try self-modification (toy)
+# Try self-modification (LLM patch + test + commit)
 docker compose exec app python -m iea.cli selfmod "Refactor memory batch upserts"
 ```
 
