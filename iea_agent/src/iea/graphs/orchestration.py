@@ -32,6 +32,15 @@ class Orchestrator:
 
     def run_self_mod(self, goal: str, files: str) -> Dict[str, Any]:
         g = build_self_mod_graph()
-        init: SelfModState = {"goal": goal, "file_list": files.split(","), "last_result": "", "status": "start", "attempts": 0}
-        out = g.invoke(init)
-        return {"status": out["status"], "last_result": out["last_result"][-2000:]}
+        state: SelfModState = {
+            "goal": goal,
+            "file_list": files.split(","),
+            "last_result": "",
+            "status": "start",
+            "attempts": 0,
+        }
+        for _ in range(3):
+            state = g.invoke(state)
+            if state["status"] in {"merged", "failed"}:
+                break
+        return {"status": state["status"], "last_result": state["last_result"][-2000:]}

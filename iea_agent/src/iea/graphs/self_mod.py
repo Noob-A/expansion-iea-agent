@@ -1,14 +1,28 @@
-"""Minimal self-modification graph for the test environment.
+"""LLM-driven self-modification workflow.
 
-The full project uses LangGraph and an LLM to iteratively propose code patches,
-run tests and merge changes.  For unit testing we only need a skeleton that
-exposes the same interface without external dependencies.  This module provides
-that lightweight stand-in.
+This module replaces the previous no-op stub with a small, usable
+self-modification loop. When invoked it will:
+
+1. Ask an LLM to generate a unified diff for the target files.
+2. Apply the patch to the repository.
+3. Run the test suite.
+4. Commit the change if tests pass.
+
+If no API key is configured the graph will bail out gracefully with a
+``failed`` status so the rest of the project and its tests can still run
+without external dependencies.
 """
 
 from __future__ import annotations
 
+import os
+import subprocess
+import textwrap
+from pathlib import Path
 from typing import Literal, TypedDict
+
+from config import SETTINGS
+from llm import make_llm
 
 
 class SelfModState(TypedDict):
@@ -20,20 +34,105 @@ class SelfModState(TypedDict):
 
 
 class _SelfModGraph:
-    """Very small state machine used in tests."""
+    """Minimal self-modification state machine backed by an LLM."""
+
+    def __init__(self) -> None:
+        # Repo root is three levels up from this file: ``src/iea/graphs`` → project root
+        self.repo_root = Path(__file__).resolve().parents[3]
+
+    def _apply_patch(self, patch: str) -> tuple[bool, str]:
+        """Apply a unified diff patch to the repository.
+
+        Returns a tuple ``(success, output)`` where ``output`` contains any
+        stdout/stderr from ``git apply``.
+        """
+
+        proc = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", "-"],
+            input=patch,
+            text=True,
+            capture_output=True,
+            cwd=self.repo_root,
+        )
+        return proc.returncode == 0, proc.stdout + proc.stderr
 
     def invoke(self, state: SelfModState) -> SelfModState:  # pragma: no cover
-        if state["status"] == "start":
-            return {**state, "status": "patched", "last_result": "patch diff"}
-        if state["status"] == "patched":
-            return {**state, "status": "tested", "last_result": "PYTEST_RC=0"}
-        if state["status"] == "tested":
-            return {**state, "status": "merged"}
+        status = state["status"]
+
+        if status == "start":
+            # Ensure we have credentials to talk to an LLM
+            if not (SETTINGS.openai_api_key or SETTINGS.openrouter_api_key):
+                return {**state, "status": "failed", "last_result": "Missing API key"}
+
+            llm = make_llm("code")
+            files = "\n".join(f"- {f}" for f in state["file_list"])
+            try:
+                repo_files = subprocess.check_output(
+                    ["git", "ls-tree", "-r", "--name-only", "HEAD"],
+                    cwd=self.repo_root,
+                    text=True,
+                )
+            except Exception:  # pragma: no cover - git not available
+                repo_files = ""
+            if len(repo_files) > 8000:
+                repo_files = repo_files[:8000] + "\n..."
+            prompt = textwrap.dedent(
+                f"""
+                You are an expert software engineer working on the following repository. The
+                current file list is:
+
+                {repo_files}
+
+                Goal: {state['goal']}
+
+                Focus on these paths if relevant:
+                {files}
+
+                Provide a unified diff starting with 'diff --git' that implements the goal.
+                Do not include any commentary outside of the patch.
+                """
+            )
+            try:
+                resp = llm.invoke(prompt)
+            except Exception as exc:  # pragma: no cover - network errors
+                return {**state, "status": "failed", "last_result": str(exc)}
+
+            patch_text = resp.content if hasattr(resp, "content") else str(resp)
+            ok, msg = self._apply_patch(patch_text)
+            if not ok:
+                return {**state, "status": "failed", "last_result": msg or patch_text}
+            return {**state, "status": "patched", "last_result": patch_text}
+
+        if status == "patched":
+            env = {**os.environ, "PYTHONPATH": str(self.repo_root / "src/iea")}
+            proc = subprocess.run(
+                ["pytest", "-q"],
+                cwd=self.repo_root,
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            out = proc.stdout + proc.stderr
+            new_status = "tested" if proc.returncode == 0 else "failed"
+            return {**state, "status": new_status, "last_result": out}
+
+        if status == "tested":
+            try:
+                subprocess.run(["git", "add", "."], cwd=self.repo_root, check=True)
+                subprocess.run(
+                    ["git", "commit", "-m", f"Self-mod: {state['goal']}"],
+                    cwd=self.repo_root,
+                    check=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                return {**state, "status": "failed", "last_result": str(exc)}
+            return {**state, "status": "merged", "last_result": "patch committed"}
+
         return {**state, "status": "failed"}
 
 
 def build_self_mod_graph() -> _SelfModGraph:
-    """Return the lightweight self-modification graph."""
+    """Return the self-modification graph."""
 
     return _SelfModGraph()
 
