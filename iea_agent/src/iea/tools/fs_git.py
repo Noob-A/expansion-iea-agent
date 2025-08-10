@@ -1,7 +1,7 @@
 from __future__ import annotations
 import subprocess
 from pathlib import Path
-from langchain_core.tools import tool
+from ._tool import tool
 
 """
 File-system + Git tools used by the self-modification pipeline.
@@ -10,7 +10,8 @@ Operations are scoped to the repository root to avoid path traversal.
 NOTE: For a fresh repo inside container, we ensure 'git init' and a main branch exist.
 """
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# Repository root for file operations
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 def _run(cmd: list[str]) -> tuple[int, str]:
     p = subprocess.Popen(cmd, cwd=REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -66,7 +67,8 @@ def run_tests() -> str:
     Run pytest and return summary lines including RC.
     """
     try:
-        code, out = _run(["pytest", "-q"])
+        # Run a small smoke test to avoid recursive invocation of this tool.
+        code, out = _run(["pytest", "-q", "iea_agent/tests/test_smoke.py"])
         return f"PYTEST_RC={code}\n{out}"
     except Exception as e:
         return f"RUN_TESTS_ERROR: {type(e).__name__}: {e}"

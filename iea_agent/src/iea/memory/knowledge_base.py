@@ -1,6 +1,6 @@
 from __future__ import annotations
-from typing import Optional, Iterable
-from langchain_core.documents import Document
+from typing import Optional, Iterable, List
+from .types import Document
 from .vectorstore import get_vectorstore
 
 def upsert_knowledge(text: str, metadata: Optional[dict] = None, collection="iea_memory") -> None:
@@ -15,7 +15,7 @@ def batch_upsert_knowledge(chunks: Iterable[str], metadata: Optional[dict] = Non
     Insert many text chunks. Returns number of added docs.
     """
     vs = get_vectorstore(collection)
-    docs = [Document(page_content=txt, metadata=metadata or {}) for txt in chunks]
+    docs: List[Document] = [Document(page_content=txt, metadata=metadata or {}) for txt in chunks]
     if not docs:
         return 0
     vs.add_documents(docs)

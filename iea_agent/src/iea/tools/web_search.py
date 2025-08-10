@@ -1,7 +1,11 @@
 from __future__ import annotations
 from typing import List
-from langchain_tavily import TavilySearchResults
-from langchain_core.tools import tool
+try:  # pragma: no cover - optional dependency
+    from langchain_tavily import TavilySearchResults  # type: ignore
+except Exception:  # langchain_tavily may not be installed
+    TavilySearchResults = None
+
+from ._tool import tool
 from ..config import SETTINGS
 
 """
@@ -10,7 +14,10 @@ We use the lightweight `TavilySearchResults` wrapper from LangChain that returns
 structured results for a given query.
 """
 
-tavily = TavilySearchResults(tavily_api_key=SETTINGS.tavily_api_key, max_results=5)
+if TavilySearchResults and SETTINGS.tavily_api_key:
+    tavily = TavilySearchResults(tavily_api_key=SETTINGS.tavily_api_key, max_results=5)
+else:  # pragma: no cover - exercised when dependency missing
+    tavily = None
 
 @tool("tavily_search", return_direct=False)
 def tavily_search(query: str) -> List[dict]:
@@ -19,9 +26,9 @@ def tavily_search(query: str) -> List[dict]:
     Input: query (str)
     Output: List[dict] with keys: 'title', 'url', 'content' (snippet)
     """
-    if not SETTINGS.tavily_api_key:
-        return [{"title": "Tavily disabled", "url": "", "content": "No API key configured"}]
+    if not SETTINGS.tavily_api_key or tavily is None:
+        return [{"title": "Tavily disabled", "url": "", "content": "No API key or dependency"}]
     try:
-        return tavily.invoke({"query": query})
-    except Exception as e:
+        return tavily.invoke({"query": query})  # type: ignore[union-attr]
+    except Exception as e:  # pragma: no cover - network errors
         return [{"title": "Search error", "url": "", "content": f"{type(e).__name__}: {e}"}]
